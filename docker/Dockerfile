@@ -24,7 +24,6 @@ volume /repos
 #############################################
 
 copy ./requirements.txt /opt/
-
 run pip install -r /opt/requirements.txt
 
 #############################################
