@@ -451,8 +451,6 @@ def fabricate_update_client(remote_lcd, remote_rpc_url, remote_rpc_header, clien
   print("\n\n")
 
   block_proposer_on_other_chain = requests.get(f"{remote_rpc_url}/blockchain", headers=remote_rpc_header, params={"minHeight": tendermint_info_on_other_chain["block"]["header"]["height"], "maxHeight": tendermint_info_on_other_chain["block"]["header"]["height"]}).json()
-  
-  print(block_proposer_on_other_chain)
 
   block_proposer_on_other_chain = block_proposer_on_other_chain["result"]["block_metas"][0]["header"]["proposer_address"]
 
@@ -472,9 +470,6 @@ def fabricate_update_client(remote_lcd, remote_rpc_url, remote_rpc_header, clien
   for x in validator_info_of_other_chain_on_my_chain["validators"]:
     if block_proposer_of_other_chain_on_my_chain == bech32_to_hexstring(x["address"]).upper():
       trusted_proposer_info = x
-
-  print("\n\n")
-  print(commit_info_on_other_chain["result"]["signed_header"]["commit"]["signatures"])
 
   version_app = 0 if "app" not in commit_info_on_other_chain["result"]["signed_header"]["header"]["version"].keys() else int(commit_info_on_other_chain["result"]["signed_header"]["header"]["version"]["app"])
 
