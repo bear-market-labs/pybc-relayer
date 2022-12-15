@@ -592,10 +592,18 @@ def fetch_proofs(rpc_url, rpc_header, client_id, trusted_height, trusted_revisio
     "prove": "true",
     "height": int(trusted_height) - 1,
   }
-  osmo_client_proof_on_terra = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
-  proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in osmo_client_proof_on_terra["result"]["response"]["proofOps"]["ops"]]
+  resp = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
+  proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
   client_proof = MerkleProof(proofs=proofs)
 
+  client_state = Any(
+    type_url="/ibc.lightclients.tendermint.v1.ClientState",
+    value=ClientState.FromString(
+      Any.FromString(
+        b64_to_bytes(resp["result"]["response"]["value"])
+      ).value
+    ).SerializeToString()
+  )
   #terra rpc weirdly ignores params for same abci query path w/o sufficient sleep
   time.sleep(2)
 
@@ -605,8 +613,8 @@ def fetch_proofs(rpc_url, rpc_header, client_id, trusted_height, trusted_revisio
     "prove": "true",
     "height": int(trusted_height) - 1,
   }
-  connection_proof_on_terra = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
-  connection_proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in connection_proof_on_terra["result"]["response"]["proofOps"]["ops"]]
+  resp = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
+  connection_proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
   connection_proof = MerkleProof(proofs=connection_proofs)
 
   time.sleep(3)
@@ -624,18 +632,40 @@ def fetch_proofs(rpc_url, rpc_header, client_id, trusted_height, trusted_revisio
     "prove": "true",
     "height": int(trusted_height) - 1,
   }
-  consensus_proof_on_terra = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
-  consensus_proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in consensus_proof_on_terra["result"]["response"]["proofOps"]["ops"]]
+  resp = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
+  consensus_proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
   consensus_proof = MerkleProof(proofs=consensus_proofs)
 
-
-  client_state = Any(
-    type_url="/ibc.lightclients.tendermint.v1.ClientState",
-    value=ClientState.FromString(
-      Any.FromString(
-        b64_to_bytes(osmo_client_proof_on_terra["result"]["response"]["value"])
-      ).value
-    ).SerializeToString()
-  )
-
   return (client_proof, connection_proof, consensus_proof, consensus_height, client_state)
+
+
+def fetch_channel_proof(rpc_url, rpc_header, port_id, channel_id, trusted_height, trusted_revision_number):
+
+  #client state proof
+  params = {
+    "path": '"/store/ibc/key"',
+    "data": "0x" + bytes(f"channelEnds/ports/{port_id}/channels/{channel_id}", "ascii").hex(),
+    "prove": "true",
+    "height": int(trusted_height) - 1,
+  }
+  resp = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
+  proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
+  channel_proof = MerkleProof(proofs=proofs)
+
+  return channel_proof
+
+def fetch_packet_proof(rpc_url, rpc_header, trusted_height, trusted_revision_number, packet_row, port_id, channel_id):
+
+  time.sleep(2)
+
+  params = {
+    "path": '"/store/ibc/key"',
+    "data": "0x" + bytes(f"commitments/ports/{port_id}/channels/{channel_id}/sequences/{packet_row['packet_sequence'][0]}", "ascii").hex(),
+    "prove": "true",
+    "height": int(trusted_height) - 1,
+  }
+  resp = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
+  proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
+  packet_proof = MerkleProof(proofs=proofs)
+
+  return packet_proof
