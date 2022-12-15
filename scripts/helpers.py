@@ -47,6 +47,10 @@ import time
 from google.protobuf.json_format import Parse, ParseDict
 from google.protobuf.timestamp_pb2 import Timestamp as googTimestamp
 
+###############################################
+# wasm tx helpers
+###############################################
+
 def deploy_local_wasm(file_path, wallet, terra):
 
   print(f"file_path: {file_path}\nwallet: {wallet.key.acc_address}")
@@ -197,6 +201,9 @@ def stargate_msg(type_url, msg, wallet, terra):
 
   return tx_result
 
+###############################################
+# data formatting helpers
+###############################################
 
 def to_binary(msg):
   return base64.b64encode(json.dumps(msg).encode("utf-8")).decode("utf-8")
@@ -239,6 +246,93 @@ def timestamp_string_to_proto(timestamp_string):
   timestamp.FromJsonString(timestamp_string)
   return Timestamp(timestamp.seconds, timestamp.nanos)
 
+###############################################
+# lcd, rpc, wallet helpers
+###############################################
+
+class BaseAsyncAPI2(BaseAsyncAPI):
+    async def query(self, query_string: str, params=None):
+        if params is None:
+          res = await self._c._get(query_string)
+        else:
+          res = await self._c._get(query_string, params=params)
+        return res
+
+    #for dispatching protobuf classes to the chain
+    async def broadcast(self, tx):
+        res = await self._c._post("/cosmos/tx/v1beta1/txs", {"tx_bytes": proto_to_binary(tx), "mode": "BROADCAST_MODE_BLOCK"})
+        return res
+
+
+class BaseAPI2(BaseAsyncAPI2):
+    @sync_bind(BaseAsyncAPI2.query)
+    def query(self, query_string: str):
+        pass
+
+    @sync_bind(BaseAsyncAPI2.broadcast)
+    def broadcast(self, tx: Tx):
+        pass
+
+class OsmoKey(MnemonicKey):
+  @property
+  def acc_address(self) -> AccAddress: 
+    if not self.raw_address:
+      raise ValueError("could not compute acc_address: missing raw_address")
+    return AccAddress(get_bech("osmo", self.raw_address.hex()))
+
+class InjKey(MnemonicKey):
+  @property
+  def acc_address(self) -> AccAddress: 
+    if not self.raw_address:
+      raise ValueError("could not compute acc_address: missing raw_address")
+    return AccAddress(get_bech("inj", self.raw_address.hex()))
+
+def fetch_chain_objects(chain_id):
+
+  creds = {}
+  # Open the file for reading
+  with open("/repos/pybc-relayer/scripts/creds.json", "r") as f:
+    # Load the dictionary from the file
+    creds = json.load(f)
+
+  seed_phrase = creds["seed_phrase"]
+
+  if chain_id == "pisco-1":
+    terra = LCDClient(url="https://pisco-lcd.terra.dev/", chain_id="pisco-1")
+    terra.broadcaster = BaseAPI2(terra)
+
+    terra_rpc_url = f"https://rpc.pisco.terra.setten.io/{creds['setten_project_id']}"
+    terra_rpc_header = {"Authorization": f"Bearer {creds['setten_key']}"}
+    
+    wallet = terra.wallet(MnemonicKey(mnemonic=seed_phrase))
+
+    return (terra, wallet, terra_rpc_url, terra_rpc_header)
+  elif chain_id == "osmo-test-4":
+    osmo = LCDClient(url="https://lcd-test.osmosis.zone", chain_id="localterra")
+    osmo.chain_id = "osmo-test-4"
+    osmo.broadcaster = BaseAPI2(osmo)
+
+    osmo_rpc_url = "https://rpc-test.osmosis.zone"
+    osmo_rpc_header = {}
+
+    wallet = osmo.wallet(OsmoKey(mnemonic=seed_phrase, coin_type=118))
+    return (osmo, wallet, osmo_rpc_url, osmo_rpc_header)
+  elif chain_id == "injective-888":
+    inj = LCDClient(url="https://k8s.testnet.lcd.injective.network:443", chain_id="localterra")
+    inj.chain_id = "injective-888"
+    inj.broadcaster = BaseAPI2(inj)
+
+    inj_rpc_url = "https://k8s.testnet.tm.injective.network:443/"
+    inj_rpc_header = {}
+
+    wallet = inj.wallet(InjKey(mnemonic=seed_phrase, coin_type=60))
+    return (inj, wallet, inj_rpc_url, inj_rpc_header)
+  
+  return (None, None, None, None)
+    
+###############################################
+# ibc helpers
+###############################################
 
 def create_ibc_client(foreign_chain_lcd, domestic_chain_lcd, domestic_chain_wallet, latest_height_revision_number=1):
 
@@ -333,3 +427,220 @@ def create_ibc_client(foreign_chain_lcd, domestic_chain_lcd, domestic_chain_wall
   """)
 
   return stargate_msg("/ibc.core.client.v1.MsgCreateClient", msg, domestic_chain_wallet, domestic_chain_lcd)
+
+def fabricate_update_client(remote_lcd, remote_rpc_url, remote_rpc_header, client_lcd, client_wallet, client_id):
+
+  print(locals())
+  print("\n\n")
+
+  tendermint_info_on_other_chain = remote_lcd.tendermint.block_info()
+
+  timestamp = googTimestamp()
+  timestamp.FromJsonString(tendermint_info_on_other_chain["block"]["header"]["time"])
+  print(f"timestamp: {timestamp} \n\n")
+
+  print("source current tendermint:")
+  print(tendermint_info_on_other_chain)
+  print("\n\n")
+
+  validator_info_on_other_chain = remote_lcd.tendermint.validator_set(height=int(tendermint_info_on_other_chain["block"]["header"]["height"]))
+  commit_info_on_other_chain = requests.get(f"{remote_rpc_url}/commit", headers=remote_rpc_header, params={"height": tendermint_info_on_other_chain["block"]["header"]["height"]}).json()
+
+  print("\n\ncommit_info:\n")
+  print(commit_info_on_other_chain)
+  print("\n\n")
+
+  block_proposer_on_other_chain = requests.get(f"{remote_rpc_url}/blockchain", headers=remote_rpc_header, params={"minHeight": tendermint_info_on_other_chain["block"]["header"]["height"], "maxHeight": tendermint_info_on_other_chain["block"]["header"]["height"]}).json()
+  
+  print(block_proposer_on_other_chain)
+
+  block_proposer_on_other_chain = block_proposer_on_other_chain["result"]["block_metas"][0]["header"]["proposer_address"]
+
+  proposer_info = None
+
+  for x in validator_info_on_other_chain["validators"]:
+    if block_proposer_on_other_chain == bech32_to_hexstring(x["address"]).upper():
+      proposer_info = x
+
+  client_state_of_other_chain_on_my_chain = client_lcd.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id}")
+  validator_info_of_other_chain_on_my_chain = remote_lcd.tendermint.validator_set(height=int(client_state_of_other_chain_on_my_chain["client_state"]["latest_height"]["revision_height"])+1)
+  block_proposer_of_other_chain_on_my_chain = requests.get(f"{remote_rpc_url}/blockchain", headers=remote_rpc_header, params={"minHeight": int(client_state_of_other_chain_on_my_chain["client_state"]["latest_height"]["revision_height"])+1, "maxHeight": int(client_state_of_other_chain_on_my_chain["client_state"]["latest_height"]["revision_height"])+1}).json()["result"]["block_metas"][0]["header"]["proposer_address"]
+
+
+  trusted_proposer_info = None
+
+  for x in validator_info_of_other_chain_on_my_chain["validators"]:
+    if block_proposer_of_other_chain_on_my_chain == bech32_to_hexstring(x["address"]).upper():
+      trusted_proposer_info = x
+
+  print("\n\n")
+  print(commit_info_on_other_chain["result"]["signed_header"]["commit"]["signatures"])
+
+  version_app = 0 if "app" not in commit_info_on_other_chain["result"]["signed_header"]["header"]["version"].keys() else int(commit_info_on_other_chain["result"]["signed_header"]["header"]["version"]["app"])
+
+  return MsgUpdateClient(
+    signer=client_wallet.key.acc_address,
+    client_id=client_id,
+    header=Any(
+      type_url="/ibc.lightclients.tendermint.v1.Header",
+      value=Header(
+        signed_header=SignedHeader(
+          header=tendermintHeader(
+            version=Consensus(
+              block=int(commit_info_on_other_chain["result"]["signed_header"]["header"]["version"]["block"]),
+              app=version_app,
+            ),
+            chain_id=remote_lcd.chain_id,
+            height=int(commit_info_on_other_chain["result"]["signed_header"]["header"]["height"]),
+            time=Timestamp(timestamp.seconds, timestamp.nanos),
+            last_block_id=BlockId(
+              hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["last_block_id"]["hash"]),
+              part_set_header=PartSetHeader(
+                total=int(commit_info_on_other_chain["result"]["signed_header"]["header"]["last_block_id"]["parts"]["total"]),
+                hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["last_block_id"]["parts"]["hash"]),
+              ),
+            ),
+            last_commit_hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["last_commit_hash"]),
+            data_hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["data_hash"]),
+            validators_hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["validators_hash"]),
+            next_validators_hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["next_validators_hash"]),
+            consensus_hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["consensus_hash"]),
+            app_hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["app_hash"]),
+            last_results_hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["last_results_hash"]),
+            evidence_hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["evidence_hash"]),
+            proposer_address=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["header"]["proposer_address"]),
+          ),
+          commit=Commit(
+            height=int(commit_info_on_other_chain["result"]["signed_header"]["commit"]["height"]),
+            round=int(commit_info_on_other_chain["result"]["signed_header"]["commit"]["round"]),
+            block_id=BlockId(
+              hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["commit"]["block_id"]["hash"]),
+              part_set_header=PartSetHeader(
+                total=int(commit_info_on_other_chain["result"]["signed_header"]["commit"]["block_id"]["parts"]["total"]),
+                hash=hexstring_to_bytes(commit_info_on_other_chain["result"]["signed_header"]["commit"]["block_id"]["parts"]["hash"]),
+              )
+            ),
+            signatures=[
+              CommitSig(
+                block_id_flag=BlockIdFlag(x["block_id_flag"]),
+                validator_address=hexstring_to_bytes(x["validator_address"]),
+                timestamp=timestamp_string_to_proto(x["timestamp"]),
+                signature=base64.b64decode(x["signature"]) if x["signature"] is not None else None,
+              )
+              for x in commit_info_on_other_chain["result"]["signed_header"]["commit"]["signatures"]
+            ],
+          ),
+        ),
+        validator_set=ValidatorSet(
+          validators=[
+            Validator(
+              address=base64.b64decode(bech32_to_b64(x["address"])),
+              pub_key=PublicKey(
+                ed25519=base64.b64decode(x["pub_key"]["key"])
+              ) if "ed25519" in x["pub_key"]["@type"] else PublicKey(
+                secp256_k1=base64.b64decode(x["pub_key"]["key"])
+              ),
+              voting_power=int(x["voting_power"]),
+            ) for x in validator_info_on_other_chain["validators"]
+          ],
+          proposer=Validator(
+            address=base64.b64decode(bech32_to_b64(proposer_info["address"])),
+            pub_key=PublicKey(
+              ed25519=base64.b64decode(proposer_info["pub_key"]["key"])
+            ) if "ed25519" in proposer_info["pub_key"]["@type"] else PublicKey(
+                secp256_k1=base64.b64decode(proposer_info["pub_key"]["key"])
+            ),
+            voting_power=int(proposer_info["voting_power"]),
+          ) 
+          ,
+          total_voting_power=sum([int(x["voting_power"]) for x in validator_info_on_other_chain["validators"]]),
+        ),
+        trusted_height=Height(
+          revision_number=int(client_state_of_other_chain_on_my_chain["client_state"]["latest_height"]["revision_number"]),
+          revision_height=int(client_state_of_other_chain_on_my_chain["client_state"]["latest_height"]["revision_height"]),
+        ),
+        trusted_validators=ValidatorSet(
+          validators=[
+            Validator(
+              address=base64.b64decode(bech32_to_b64(x["address"])),
+              pub_key=PublicKey(
+                ed25519=base64.b64decode(x["pub_key"]["key"])
+              ) if "ed25519" in x["pub_key"]["@type"] else PublicKey(
+                secp256_k1=base64.b64decode(x["pub_key"]["key"])
+              ),
+              voting_power=int(x["voting_power"]),
+            ) for x in validator_info_of_other_chain_on_my_chain["validators"]
+          ],
+          proposer=Validator(
+            address=base64.b64decode(bech32_to_b64(trusted_proposer_info["address"])),
+            pub_key=PublicKey(
+              ed25519=base64.b64decode(trusted_proposer_info["pub_key"]["key"])
+            ) if "ed25519" in trusted_proposer_info["pub_key"]["@type"] else PublicKey(
+                secp256_k1=base64.b64decode(trusted_proposer_info["pub_key"]["key"])
+            ),
+            voting_power=int(trusted_proposer_info["voting_power"]),
+          ) 
+          ,
+          total_voting_power=sum([int(x["voting_power"]) for x in validator_info_of_other_chain_on_my_chain["validators"]]),
+        ),
+      ).SerializeToString(),
+    ),
+  )
+
+
+def fetch_proofs(rpc_url, rpc_header, client_id, trusted_height, trusted_revision_number, connection_id):
+
+  #client state proof
+  params = {
+    "path": '"/store/ibc/key"',
+    "data": "0x" + bytes(f"clients/{client_id}/clientState", "ascii").hex(),
+    "prove": "true",
+    "height": int(trusted_height) - 1,
+  }
+  osmo_client_proof_on_terra = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
+  proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in osmo_client_proof_on_terra["result"]["response"]["proofOps"]["ops"]]
+  client_proof = MerkleProof(proofs=proofs)
+
+  #terra rpc weirdly ignores params for same abci query path w/o sufficient sleep
+  time.sleep(2)
+
+  params = {
+    "path": '"/store/ibc/key"',
+    "data": "0x" + bytes(f"connections/{connection_id}", "ascii").hex(),
+    "prove": "true",
+    "height": int(trusted_height) - 1,
+  }
+  connection_proof_on_terra = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
+  connection_proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in connection_proof_on_terra["result"]["response"]["proofOps"]["ops"]]
+  connection_proof = MerkleProof(proofs=connection_proofs)
+
+  time.sleep(3)
+  params = {
+    "path": '"/ibc.core.client.v1.Query/ClientState"',
+    "data": "0x" + QueryClientStateRequest(client_id).SerializeToString().hex(),
+    "prove": "false",
+  }
+  consensus_height = ClientState.FromString(QueryClientStateResponse.FromString(b64_to_bytes(requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()["result"]["response"]["value"])).client_state.value).latest_height
+
+  time.sleep(3)
+  params = {
+    "path": '"/store/ibc/key"',
+    "data": "0x" + bytes(f"clients/{client_id}/consensusStates/{consensus_height.revision_number}-{consensus_height.revision_height}", "ascii").hex(),
+    "prove": "true",
+    "height": int(trusted_height) - 1,
+  }
+  consensus_proof_on_terra = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
+  consensus_proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in consensus_proof_on_terra["result"]["response"]["proofOps"]["ops"]]
+  consensus_proof = MerkleProof(proofs=consensus_proofs)
+
+
+  client_state = Any(
+    type_url="/ibc.lightclients.tendermint.v1.ClientState",
+    value=ClientState.FromString(
+      Any.FromString(
+        b64_to_bytes(osmo_client_proof_on_terra["result"]["response"]["value"])
+      ).value
+    ).SerializeToString()
+  )
+
+  return (client_proof, connection_proof, consensus_proof, consensus_height, client_state)
