@@ -24,11 +24,10 @@ volume /repos
 #############################################
 
 copy ./requirements.txt /opt/
-
 run pip install -r /opt/requirements.txt
 
 #############################################
 # command
 #############################################
 
-cmd ["jupyter", "lab", "--port=6994"]
+entrypoint ["jupyter", "lab", "--port=6994", "--allow-root", "--NotebookApp.token=''", "--notebook-dir=/repos", "--NotebookApp.allow_origin='*'", "--no-browser", "--ip='*'"]
