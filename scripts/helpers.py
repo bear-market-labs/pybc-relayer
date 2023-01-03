@@ -669,3 +669,80 @@ def fetch_packet_proof(rpc_url, rpc_header, trusted_height, trusted_revision_num
   packet_proof = MerkleProof(proofs=proofs)
 
   return packet_proof
+
+def fetch_pending_packets(min_height, max_height, connection_id_on_packet_sender_chain, connection_id_on_packet_receiver_chain, port_id_on_sender_chain, port_id_on_receiver_chain, channel_id_on_sender_chain, channel_id_on_receiver_chain, rpc_url_for_sender_chain, rpc_header_for_sender_chain, rpc_url_for_receiver_chain, rpc_header_for_receiver_chain):
+
+  params = {
+    "query": "0x" + bytes(f"send_packet.packet_connection='{connection_id_on_packet_sender_chain}' and tx.height>={min_height} and tx.height<={max_height}", "ascii").hex(),
+  }
+  tx_results = requests.get(f"{rpc_url_for_sender_chain}/tx_search", headers=rpc_header_for_sender_chain, params=params).json()
+  parsed_packets = [ (i, b64_to_bytes(z["key"]).decode("utf-8"), b64_to_bytes(z["value"]).decode("utf-8"))
+    for (i, y) in enumerate(tx_results["result"]["txs"])
+    for x in y["tx_result"]["events"] if x["type"]=="send_packet"
+    for z in x["attributes"]
+  ]
+  packets_df = pd.DataFrame(parsed_packets)
+  packets_df.columns = ["index", "cols", "vals"]
+  packets_df = packets_df.pivot(index="index", columns="cols", values="vals")
+
+  #check if receiver_chain has received any of the packets
+  params = {
+    "path": '"/ibc.core.channel.v1.Query/UnreceivedPackets"',
+    "data": "0x" + QueryUnreceivedPacketsRequest(port_id_on_receiver_chain, channel_id_on_receiver_chain, [int(x) for x in packets_df["packet_sequence"].values]).SerializeToString().hex(),
+    "prove": "false",
+  }
+  unreceived_packets_sequence_numbers = QueryUnreceivedPacketsResponse.FromString(b64_to_bytes(requests.get(f"{rpc_url_for_receiver_chain}/abci_query", headers=rpc_header_for_receiver_chain, params=params).json()["result"]["response"]["value"])).sequences
+
+  unreceived_packets = packets_df[packets_df["packet_sequence"].isin([str(x) for x in unreceived_packets_sequence_numbers])]
+
+  #check if sender_chain has a packet commitment for the not-yet-received packets
+  params = [(x, {
+    "path": '"/ibc.core.channel.v1.Query/PacketCommitment"',
+    "data": "0x" + QueryPacketCommitmentRequest(port_id_on_sender_chain, channel_id_on_sender_chain, int(x)).SerializeToString().hex(),
+    "prove": "false",
+  }) for x in unreceived_packets["packet_sequence"].values]
+
+  unreceived_and_commitment = []
+
+  for x in params:
+    time.sleep(2)
+    _resp = requests.get(f"{rpc_url_for_sender_chain}/abci_query", headers=rpc_header_for_sender_chain, params=x[1]).json()["result"]["response"]["value"]
+    if _resp is not None:
+      unreceived_and_commitment.append((x[0], QueryPacketCommitmentResponse.FromString(b64_to_bytes(_resp))))
+
+  pending_packets_df = unreceived_packets[unreceived_packets["packet_sequence"].isin([x[0] for x in unreceived_and_commitment])]
+  pending_packets_df["timed_out"] = pending_packets_df["packet_timeout_timestamp"] < str(time.time_ns())
+
+  return pending_packets_df
+
+
+def fetch_packet_proof(rpc_url, rpc_header, trusted_height, trusted_revision_number, packet_row, port_id, channel_id):
+
+  time.sleep(2)
+
+  params = {
+    "path": '"/store/ibc/key"',
+    "data": "0x" + bytes(f"commitments/ports/{port_id}/channels/{channel_id}/sequences/{packet_row['packet_sequence'][0]}", "ascii").hex(),
+    "prove": "true",
+    "height": int(trusted_height) - 1,
+  }
+  client_proof = requests.get(f"{rpc_url}/abci_query", headers=rpc_header, params=params).json()
+  proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in client_proof["result"]["response"]["proofOps"]["ops"]]
+  packet_proof = MerkleProof(proofs=proofs)
+
+  return packet_proof
+
+def fetch_ack_proof(rpc_url, rpc_header, trusted_height, trusted_revision_number):
+  time.sleep(2)
+
+  params = {
+    "path": '"/store/ibc/key"',
+    "data": "0x" + bytes(f"acks/ports/{ack_row["packet_dst_port"]}/channels/{ack_row["packet_dst_channel"]}/sequences/{ack_row["packet_sequence"]}", "ascii").hex(),
+    "prove": "true",
+    "height": int(trusted_height) - 1,
+  }
+  client_proof = requests.get(f"{rpc_url }/abci_query", headers=rpc_header, params=params).json()
+  proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in client_proof["result"]["response"]["proofOps"]["ops"]]
+  ack_proof = MerkleProof(proofs=proofs)
+
+  return ack_proof
