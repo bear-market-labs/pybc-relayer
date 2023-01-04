@@ -141,8 +141,8 @@ if pending_packets_df.shape[0] > 0:
         relay_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_results.append(relay_result_df)
 
-print("\n\nterra to osmo relayed packets:")
-print(relay_results)
+    print("\n\nterra to osmo relayed packets:")
+    print(relay_results)
 
 #OSMO --> TERRA
 #update the client on osmo, fetch packet proofs, and dispatch relay message
@@ -152,7 +152,7 @@ update_client_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", updat
 osmo_client_trusted_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
 osmo_client_trusted_revision_number = terra.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_terra}")["client_state"]["latest_height"]["revision_number"]
 
-if osmo_pending_packets.shape[0] > 0:
+if osmo_pending_packets_df.shape[0] > 0:
     packet_proofs = [
       (i, fetch_packet_proof(osmo_rpc_url, osmo_rpc_header, osmo_client_trusted_height, osmo_client_trusted_revision_number, x, port_on_osmo, channel_id_on_osmo))
 
@@ -185,8 +185,8 @@ if osmo_pending_packets.shape[0] > 0:
         relay_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_results.append(relay_result_df)
 
-print("\n\nosmo to terra relayed packets:")
-print(relay_results)
+    print("\n\nosmo to terra relayed packets:")
+    print(relay_results)
 
 #################################################################################
 # RELAY QUEUED ACKS FROM BOTH CHAINS
@@ -233,7 +233,7 @@ if len(parsed_acks) > 0:
     osmo_client_trusted_revision_number = terra.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_terra}")["client_state"]["latest_height"]["revision_number"]
 
 
-    ##fetch packetack proofs - acks/ports/{port_id}/channels/{channel_id}/sequences/{ack_sequence}
+    ##fetch packetack proofs
     ack_proofs = [
         (i, fetch_ack_proof(osmo_rpc_url, osmo_rpc_header, x, osmo_client_trusted_height, osmo_client_trusted_revision_number))
 
@@ -268,7 +268,8 @@ if len(parsed_acks) > 0:
         relay_ack_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_ack_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_ack_results.append(relay_ack_result_df)
 
-print(relay_ack_results)
+    print("\n\nosmo to terra relayed acks:"
+    print(relay_ack_results)
 
 #TERRA --> OSMO
 #fetch queued acks on TERRA, and relay back to OSMO
@@ -311,9 +312,9 @@ if len(parsed_acks) > 0:
     terra_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
 
 
-    ##fetch packetack proofs - acks/ports/{port_id}/channels/{channel_id}/sequences/{ack_sequence}
+    ##fetch packet ack proofs 
     ack_proofs = [
-        fetch_ack_proof(terra_rpc_url, terra_rpc_header, terra_client_trusted_height, terra_client_trusted_revision_number)
+        fetch_ack_proof(terra_rpc_url, terra_rpc_header, x, terra_client_trusted_height, terra_client_trusted_revision_number)
 
         for (i,x) in acks_df.iterrows()
     ]
@@ -345,6 +346,144 @@ if len(parsed_acks) > 0:
         relay_ack_result = stargate_msg("/ibc.core.channel.v1.MsgAcknowledgement", msg, osmo_wallet, osmo)
         relay_ack_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_ack_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_ack_results.append(relay_ack_result_df)
+
+    print("\n\nterra to osmo relayed acks:"
+    print(relay_ack_results)
+
+#################################################################################
+# HANDLE TIMED-OUT PACKETS FROM BOTH CHAINS
+#################################################################################
+
+#cleanup TERRA-side timed-out packets
+timed_out_packets_df = pd.DataFrame() if pending_packets_df.shape[0] <= 0 else pending_packets_df[pending_packets_df["timed_out"]].reset_index()
+
+if timed_out_packets_df.shape[0] > 0:
+
+    #timeout packets
+    time.sleep(10)
+    update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, osmo_rpc_header, terra, wallet, client_id_on_terra)
+    update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, wallet, terra)
+    header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
+
+    osmo_client_trusted_height = header_height
+    osmo_client_trusted_revision_number = terra.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_terra}")["client_state"]["latest_height"]["revision_number"]
+
+    #query for the next sequence number
+    params = {
+      "path": '"/ibc.core.channel.v1.Query/NextSequenceReceive"',
+      "data": "0x" + QueryNextSequenceReceiveRequest(port_id_on_osmo, channel_id_on_osmo).SerializeToString().hex(),
+      "prove": "false",
+    }
+    next_sequence_number = QueryNextSequenceReceiveResponse.FromString(b64_to_bytes(requests.get(f"{osmo_rpc_url}/abci_query", headers=osmo_rpc_header, params=params).json()["result"]["response"]["value"])).next_sequence_receive
+
+
+    #for each timed-out packet, fetch nonexistence proof (ie, the timed-out packet never executed on osmo), and dispatch timeout msg
+    timed_out_packets_df = pending_packets_df[pending_packets_df["timed_out"]].reset_index()
+    time_out_results = []
+    for (i,row) in timed_out_packets_df.iterrows():
+
+        #assemble original packet
+        packet = Packet(
+          sequence=int(row["packet_sequence"]),
+          source_port=row["packet_src_port"],
+          source_channel=row["packet_src_channel"],
+          destination_port=row["packet_dst_port"],
+          destination_channel=row["packet_dst_channel"],
+          data=hexstring_to_bytes(row.packet_data_hex),
+          timeout_height=Height(int(row["packet_timeout_height"].split('-')[0]), int(row["packet_timeout_height"].split('-')[1])),
+          timeout_timestamp=int(row["packet_timeout_timestamp"]),
+        )
+
+        #prove the packet wasn't processed on osmo
+        params = {
+          "path": '"/store/ibc/key"',
+          "data": "0x" + bytes(f"receipts/ports/{packet.destination_port}/channels/{packet.destination_channel}/sequences/{packet.sequence}", "ascii").hex(),
+          "prove": "true",
+          "height": int(osmo_client_trusted_height) - 1,
+        }
+        resp = requests.get(f"{osmo_rpc_url }/abci_query", headers=osmo_rpc_header, params=params).json()
+        proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
+        receipt_proof = MerkleProof(proofs=proofs)
+
+        #attach original packet & "nonexistence proof", and dispatch time out message
+        msg = MsgTimeout(
+          packet=packet,
+          proof_unreceived=receipt_proof.SerializeToString(),
+          proof_height=Height(int(osmo_client_trusted_revision_number), int(osmo_client_trusted_height)),
+          next_sequence_recv=next_sequence_number,
+          signer=wallet.key.acc_address,
+        )
+
+        timeout_result = stargate_msg("/ibc.core.channel.v1.MsgTimeout", msg, wallet, terra)
+        timeout_result_df = pd.DataFrame([y for x in [x["attributes"] for x in timeout_result["tx_response"]["logs"][0]["events"]] for y in x])
+        time_out_results.append(timeout_result_df)
+
+    print("\n\nterra-side timed-out packets:"
+    print(time_out_results)
+
+#cleanup OSMO-side timed-out packets
+timed_out_packets_df = pd.DataFrame() if osmo_pending_packets_df.shape[0] <= 0 else osmo_pending_packets_df[osmo_pending_packets_df["timed_out"]].reset_index()
+
+if timed_out_packets_df.shape[0] > 0:
+
+    #timeout packets
+    time.sleep(10)
+    update_client_msg = fabricate_update_client(terra, terra_rpc_url, terra_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
+    update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, osmo_wallet, osmo)
+    header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
+
+    terra_client_trusted_height = header_height
+    terra_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
+
+    #query for the next sequence number
+    params = {
+      "path": '"/ibc.core.channel.v1.Query/NextSequenceReceive"',
+      "data": "0x" + QueryNextSequenceReceiveRequest(port_id_on_terra, channel_id_on_terra).SerializeToString().hex(),
+      "prove": "false",
+    }
+    next_sequence_number = QueryNextSequenceReceiveResponse.FromString(b64_to_bytes(requests.get(f"{terra_rpc_url}/abci_query", headers=terra_rpc_header, params=params).json()["result"]["response"]["value"])).next_sequence_receive
+
+
+    #for each timed-out packet, fetch nonexistence proof (ie, the timed-out packet never executed on osmo), and dispatch timeout msg
+    timed_out_packets_df = osmo_pending_packets_df[osmo_pending_packets_df["timed_out"]].reset_index()
+    time_out_results = []
+    for (i,row) in timed_out_packets_df.iterrows():
+
+        packet = Packet(
+          sequence=int(row["packet_sequence"]),
+          source_port=row["packet_src_port"],
+          source_channel=row["packet_src_channel"],
+          destination_port=row["packet_dst_port"],
+          destination_channel=row["packet_dst_channel"],
+          data=hexstring_to_bytes(row.packet_data_hex),
+          timeout_height=Height(int(row["packet_timeout_height"].split('-')[0]), int(row["packet_timeout_height"].split('-')[1])),
+          timeout_timestamp=int(row["packet_timeout_timestamp"]),
+        )
+
+        params = {
+          "path": '"/store/ibc/key"',
+          "data": "0x" + bytes(f"receipts/ports/{packet.destination_port}/channels/{packet.destination_channel}/sequences/{packet.sequence}", "ascii").hex(),
+          "prove": "true",
+          "height": int(terra_client_trusted_height) - 1,
+        }
+        resp = requests.get(f"{terra_rpc_url }/abci_query", headers=terra_rpc_header, params=params).json()
+        proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
+        receipt_proof = MerkleProof(proofs=proofs)
+
+        msg = MsgTimeout(
+          packet=packet,
+          proof_unreceived=receipt_proof.SerializeToString(),
+          proof_height=Height(int(terra_client_trusted_revision_number), int(terra_client_trusted_revision_number)),
+          next_sequence_recv=next_sequence_number,
+          signer=osmo_wallet.key.acc_address,
+        )
+
+        timeout_result = stargate_msg("/ibc.core.channel.v1.MsgTimeout", msg, osmo_wallet, osmo)
+        timeout_result_df = pd.DataFrame([y for x in [x["attributes"] for x in timeout_result["tx_response"]["logs"][0]["events"]] for y in x])
+        time_out_results.append(timeout_result_df)
+
+    print("\n\nosmo-side timed-out packets:"
+    print(time_out_results)
 
 #persist context w/ updated heights
 print(context)
