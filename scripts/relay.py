@@ -268,7 +268,7 @@ if len(parsed_acks) > 0:
         relay_ack_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_ack_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_ack_results.append(relay_ack_result_df)
 
-    print("\n\nosmo to terra relayed acks:"
+    print("\n\nosmo to terra relayed acks:")
     print(relay_ack_results)
 
 #TERRA --> OSMO
@@ -347,7 +347,7 @@ if len(parsed_acks) > 0:
         relay_ack_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_ack_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_ack_results.append(relay_ack_result_df)
 
-    print("\n\nterra to osmo relayed acks:"
+    print("\n\nterra to osmo relayed acks:")
     print(relay_ack_results)
 
 #################################################################################
@@ -418,7 +418,7 @@ if timed_out_packets_df.shape[0] > 0:
         timeout_result_df = pd.DataFrame([y for x in [x["attributes"] for x in timeout_result["tx_response"]["logs"][0]["events"]] for y in x])
         time_out_results.append(timeout_result_df)
 
-    print("\n\nterra-side timed-out packets:"
+    print("\n\nterra-side timed-out packets:")
     print(time_out_results)
 
 #cleanup OSMO-side timed-out packets
@@ -482,7 +482,7 @@ if timed_out_packets_df.shape[0] > 0:
         timeout_result_df = pd.DataFrame([y for x in [x["attributes"] for x in timeout_result["tx_response"]["logs"][0]["events"]] for y in x])
         time_out_results.append(timeout_result_df)
 
-    print("\n\nosmo-side timed-out packets:"
+    print("\n\nosmo-side timed-out packets:")
     print(time_out_results)
 
 #persist context w/ updated heights
