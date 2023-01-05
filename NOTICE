@@ -1,6 +1,6 @@
 pybc relayer: a python implementation/tutorial of IBC connection setup and IBC-enabled contract deployments
 
-Copyright 2022 Alameda Finance & Zodiac Protocol
+Copyright 2022 Bear Market Labs & Zodiac Protocol
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
