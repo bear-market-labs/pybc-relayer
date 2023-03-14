@@ -410,12 +410,12 @@ def fetch_chain_objects(chain_id):
     wallet = inj.wallet(InjKey(mnemonic=seed_phrase, coin_type=60))
     return (inj, wallet, inj_rpc_url, inj_rpc_header)
   elif chain_id == "localterra":
-    terra = LCDClient(url="http://3.88.107.200:1317", chain_id="localterra")
+    terra = LCDClient(url="xxx", chain_id="localterra")
     terra.broadcaster = BaseAPI2(terra)
 
     #terra_rpc_url = f"https://rpc.pisco.terra.setten.io/{creds['setten_project_id']}"
     #terra_rpc_header = {"Authorization": f"Bearer {creds['setten_key']}"}
-    terra_rpc_url = "http://3.88.107.200:26657"
+    terra_rpc_url = "xxx"
     terra_rpc_header = {}
     
     wallet = terra.wallet(MnemonicKey(mnemonic=seed_phrase))
