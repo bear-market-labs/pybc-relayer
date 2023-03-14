@@ -52,8 +52,8 @@ sys.path.append(os.path.join(os.path.dirname(__name__), '..', 'scripts'))
 
 from helpers import proto_to_binary, timestamp_string_to_proto, stargate_msg, create_ibc_client, fetch_chain_objects, bech32_to_hexstring, hexstring_to_bytes, bech32_to_b64, b64_to_bytes, fabricate_update_client, fetch_proofs, deploy_local_wasm, init_contract, execute_msg, fetch_channel_proof
 
-#setup lcd clients, rpc urls, wallets
-(terra, wallet, terra_rpc_url, terra_rpc_header) = fetch_chain_objects("pisco-1")
+#setup lcd clients, rpc urls, inj_wallets
+(inj, inj_wallet, inj_rpc_url, inj_rpc_header) = fetch_chain_objects("injective-888")
 (osmo, osmo_wallet, osmo_rpc_url, osmo_rpc_header) = fetch_chain_objects("osmo-test-4")
 
 #load ibc client & connection information from previous notebooks
@@ -63,9 +63,9 @@ with open("context.json", "r") as f:
     # Load the dictionary from the file
     context = json.load(f)
     
-client_id_on_terra = context["client_id_on_terra"]
+client_id_on_inj = context["client_id_on_inj"]
 client_id_on_osmo = context["client_id_on_osmo"]
-connection_id_on_terra = context["connection_id_on_terra"]
+connection_id_on_inj = context["connection_id_on_inj"]
 connection_id_on_osmo = context["connection_id_on_osmo"]
 
 ###################################################
@@ -73,19 +73,19 @@ connection_id_on_osmo = context["connection_id_on_osmo"]
 ###################################################
 
 ##from scratch code upload
-#ica_controller_code_id = deploy_local_wasm("/repos/cw-ibc-demo/artifacts/simple_ica_controller.wasm", wallet, terra)
+#ica_controller_code_id = deploy_local_wasm("/repos/cw-ibc-demo/artifacts/simple_ica_controller.wasm", inj_wallet, inj)
 #osmo_ica_host_code_id = deploy_local_wasm("/repos/cw-ibc-demo/artifacts/simple_ica_host.wasm", osmo_wallet, osmo)
 #osmo_cw1_code_id = deploy_local_wasm("/repos/cw-plus/artifacts/cw1_whitelist.wasm", osmo_wallet, osmo)
 
 #using already uploaded code ids
-ica_controller_code_id = '6284'
+ica_controller_code_id = '536'
 osmo_ica_host_code_id = '4692'
 osmo_cw1_code_id = '4693'
 
 #controller
 init_msg = {
 }
-controller_result = init_contract(ica_controller_code_id, init_msg, wallet, terra, "ica_controller")
+controller_result = init_contract(ica_controller_code_id, init_msg, inj_wallet, inj, "ica_controller")
 controller_address = controller_result.logs[0].events_by_type["wasm"]["_contract_address"][0]
 
 #host
@@ -96,11 +96,11 @@ host_result = init_contract(osmo_ica_host_code_id, init_msg, osmo_wallet, osmo, 
 host_address = host_result.logs[0].events_by_type["instantiate"]["_contract_address"][0]
 
 #contracts automatically generate an ibc port
-controller_port = terra.wasm.contract_info(controller_address)["ibc_port_id"]
+controller_port = inj.wasm.contract_info(controller_address)["ibc_port_id"]
 host_port = osmo.wasm.contract_info(host_address)["ibc_port_id"]
 
 print(f"""
-ica_controller_code_id on terra: {ica_controller_code_id}
+ica_controller_code_id on inj: {ica_controller_code_id}
 ica_host_code_id on osmo: {osmo_ica_host_code_id}
 cw1_code_id on osmo: {osmo_cw1_code_id}
 
@@ -125,29 +125,29 @@ msg = MsgChannelOpenInit(
       port_id=host_port,
     ),
     connection_hops=[
-      connection_id_on_terra
+      connection_id_on_inj
     ],
     version="simple-ica-v2",
   ),
   signer=wallet.key.acc_address
 )
 
-channel_open_init_on_terra = stargate_msg("/ibc.core.channel.v1.MsgChannelOpenInit", msg, wallet, terra)
-channel_open_init_on_terra_df = pd.DataFrame(channel_open_init_on_terra["tx_response"]["logs"][0]["events"][0]["attributes"])
-channel_id_on_terra = channel_open_init_on_terra_df[channel_open_init_on_terra_df["key"]=="channel_id"]["value"].values[0]
+channel_open_init_on_inj = stargate_msg("/ibc.core.channel.v1.MsgChannelOpenInit", msg, inj_wallet, inj)
+channel_open_init_on_inj_df = pd.DataFrame(channel_open_init_on_inj["tx_response"]["logs"][0]["events"][0]["attributes"])
+channel_id_on_inj = channel_open_init_on_inj_df[channel_open_init_on_inj_df["key"]=="channel_id"]["value"].values[0]
 
-print(channel_open_init_on_terra_df)
+print(channel_open_init_on_inj_df)
 
 #ChannelOpenTry
 time.sleep(10) #wait a few blocks
-msg = fabricate_update_client(terra, terra_rpc_url, terra_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
+msg = fabricate_update_client(inj, inj_rpc_url, inj_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
 update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", msg, osmo_wallet, osmo)
 header_height = Header.FromString(msg.header.value).signed_header.header.height
 
-terra_client_trusted_height = header_height
-terra_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
+inj_client_trusted_height = header_height
+inj_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
 
-channel_proof = fetch_channel_proof(terra_rpc_url, terra_rpc_header, controller_port, channel_id_on_terra, terra_client_trusted_height, terra_client_trusted_revision_number)
+channel_proof = fetch_channel_proof(inj_rpc_url, inj_rpc_header, controller_port, channel_id_on_inj, inj_client_trusted_height, inj_client_trusted_revision_number)
 
 msg = MsgChannelOpenTry(
   port_id=host_port,
@@ -156,7 +156,7 @@ msg = MsgChannelOpenTry(
     ordering=Order.ORDER_UNORDERED,
     counterparty=Counterparty(
       port_id=controller_port,
-      channel_id=channel_id_on_terra,
+      channel_id=channel_id_on_inj,
     ),
     connection_hops=[
       connection_id_on_osmo
@@ -165,7 +165,7 @@ msg = MsgChannelOpenTry(
   ),
   counterparty_version="simple-ica-v2",
   proof_init=channel_proof.SerializeToString(),
-  proof_height=Height(int(terra_client_trusted_revision_number), int(terra_client_trusted_height)),
+  proof_height=Height(int(inj_client_trusted_revision_number), int(inj_client_trusted_height)),
   signer=osmo_wallet.key.acc_address,
 )
 
@@ -177,18 +177,18 @@ print(channel_open_try_on_osmo_df)
 
 #ChannelOpenAck
 time.sleep(15) #wait a few blocks
-update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, terra_rpc_header, terra, wallet, client_id_on_terra)
-update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, wallet, terra)
+update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, inj_rpc_header, inj, inj_wallet, client_id_on_inj)
+update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, inj_wallet, inj)
 header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
 
 osmo_client_trusted_height = header_height
-osmo_client_trusted_revision_number = terra.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_terra}")["client_state"]["latest_height"]["revision_number"]
+osmo_client_trusted_revision_number = inj.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_inj}")["client_state"]["latest_height"]["revision_number"]
 
-channel_proof = fetch_channel_proof(osmo_rpc_url, terra_rpc_header, host_port, channel_id_on_osmo, osmo_client_trusted_height, osmo_client_trusted_revision_number)
+channel_proof = fetch_channel_proof(osmo_rpc_url, inj_rpc_header, host_port, channel_id_on_osmo, osmo_client_trusted_height, osmo_client_trusted_revision_number)
 
 msg = MsgChannelOpenAck(
   port_id=controller_port,
-  channel_id=channel_id_on_terra,
+  channel_id=channel_id_on_inj,
   counterparty_channel_id=channel_id_on_osmo,
   counterparty_version="simple-ica-v2",
   proof_try=channel_proof.SerializeToString(),
@@ -196,10 +196,10 @@ msg = MsgChannelOpenAck(
   signer=wallet.key.acc_address,
 )
 
-channel_open_ack_result = stargate_msg("/ibc.core.channel.v1.MsgChannelOpenAck", msg, wallet, terra)
-channel_open_ack_on_terra_df = pd.DataFrame(channel_open_ack_result["tx_response"]["logs"][0]["events"][0]["attributes"])
+channel_open_ack_result = stargate_msg("/ibc.core.channel.v1.MsgChannelOpenAck", msg, inj_wallet, inj)
+channel_open_ack_on_inj_df = pd.DataFrame(channel_open_ack_result["tx_response"]["logs"][0]["events"][0]["attributes"])
 
-print(channel_open_ack_on_terra_df)
+print(channel_open_ack_on_inj_df)
 
 #parse the ibc who_am_i packet for relay after channel setup is complete
 packet_df = pd.DataFrame([x for x in channel_open_ack_result["tx_response"]["logs"][0]["events"] if x["type"]=="send_packet"][0]["attributes"])
@@ -222,20 +222,20 @@ print(packet_to_relay)
 
 #ChannelOpenConfirm
 time.sleep(10) #wait a few blocks
-update_client_msg = fabricate_update_client(terra, terra_rpc_url, terra_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
+update_client_msg = fabricate_update_client(inj, inj_rpc_url, inj_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
 update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, osmo_wallet, osmo)
 header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
 
-terra_client_trusted_height = header_height
-terra_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
+inj_client_trusted_height = header_height
+inj_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
 
-channel_proof = fetch_channel_proof(terra_rpc_url, terra_rpc_header, controller_port, channel_id_on_terra, terra_client_trusted_height, terra_client_trusted_revision_number)
+channel_proof = fetch_channel_proof(inj_rpc_url, inj_rpc_header, controller_port, channel_id_on_inj, inj_client_trusted_height, inj_client_trusted_revision_number)
 
 msg = MsgChannelOpenConfirm(
   port_id=host_port,
   channel_id=channel_id_on_osmo,
   proof_ack=channel_proof.SerializeToString(),
-  proof_height=Height(int(terra_client_trusted_revision_number), int(terra_client_trusted_height)),
+  proof_height=Height(int(inj_client_trusted_revision_number), int(inj_client_trusted_height)),
   signer=osmo_wallet.key.acc_address,
 )
 
@@ -250,27 +250,27 @@ print(channel_open_confirm_on_osmo_df)
 
 #relay packet
 time.sleep(10) #wait a few blocks
-update_client_msg = fabricate_update_client(terra, terra_rpc_url, terra_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
+update_client_msg = fabricate_update_client(inj, inj_rpc_url, inj_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
 update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, osmo_wallet, osmo)
 header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
 
-terra_client_trusted_height = header_height
-terra_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
+inj_client_trusted_height = header_height
+inj_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
 
 params = {
     "path": '"/store/ibc/key"',
-    "data": "0x" + bytes(f"commitments/ports/{controller_port}/channels/{channel_id_on_terra}/sequences/{packet_to_relay.sequence}", "ascii").hex(),
+    "data": "0x" + bytes(f"commitments/ports/{controller_port}/channels/{channel_id_on_inj}/sequences/{packet_to_relay.sequence}", "ascii").hex(),
     "prove": "true",
-    "height": int(terra_client_trusted_height) - 1,
+    "height": int(inj_client_trusted_height) - 1,
 }
-resp = requests.get(f"{terra_rpc_url}/abci_query", headers=terra_rpc_header, params=params).json()
+resp = requests.get(f"{inj_rpc_url}/abci_query", headers=inj_rpc_header, params=params).json()
 proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
 packet_proof = MerkleProof(proofs=proofs)
 
 msg = MsgRecvPacket(
   packet=packet_to_relay,
   proof_commitment=packet_proof.SerializeToString(),
-  proof_height=Height(int(terra_client_trusted_revision_number), int(terra_client_trusted_height)),
+  proof_height=Height(int(inj_client_trusted_revision_number), int(inj_client_trusted_height)),
   signer=osmo_wallet.key.acc_address
 )
 
@@ -289,12 +289,12 @@ print(ack_row)
 
 #relay ack
 time.sleep(10) #wait a few blocks
-update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, terra_rpc_header, terra, wallet, client_id_on_terra)
-update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, wallet, terra)
+update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, inj_rpc_header, inj, inj_wallet, client_id_on_inj)
+update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, inj_wallet, inj)
 header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
 
 osmo_client_trusted_height = header_height
-osmo_client_trusted_revision_number = terra.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_terra}")["client_state"]["latest_height"]["revision_number"]
+osmo_client_trusted_revision_number = inj.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_inj}")["client_state"]["latest_height"]["revision_number"]
 
 ##fetch packet ack proofs - acks/ports/{port_id}/channels/{channel_id}/sequences/{ack_sequence}
 params = {
@@ -303,7 +303,7 @@ params = {
   "prove": "true",
   "height": int(osmo_client_trusted_height) - 1,
 }
-resp = requests.get(f"{osmo_rpc_url }/abci_query", headers=terra_rpc_header, params=params).json()
+resp = requests.get(f"{osmo_rpc_url }/abci_query", headers=inj_rpc_header, params=params).json()
 proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
 ack_proof = MerkleProof(proofs=proofs)
 
@@ -317,7 +317,7 @@ msg = MsgAcknowledgement(
   signer=wallet.key.acc_address,
 )
 
-relay_ack_result = stargate_msg("/ibc.core.channel.v1.MsgAcknowledgement", msg, wallet, terra)
+relay_ack_result = stargate_msg("/ibc.core.channel.v1.MsgAcknowledgement", msg, inj_wallet, inj)
 relay_ack_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_ack_result["tx_response"]["logs"][0]["events"]] for y in x])
 
 print(relay_ack_result_df)
@@ -326,9 +326,9 @@ print(relay_ack_result_df)
 #persist channel info
 ###################################################
 
-context["channel_id_on_terra"] = channel_id_on_terra
+context["channel_id_on_inj"] = channel_id_on_inj
 context["channel_id_on_osmo"] = channel_id_on_osmo
-context["port_id_on_terra"] = controller_port
+context["port_id_on_inj"] = controller_port
 context["port_id_on_osmo"] = host_port
 context["controller_address"] = controller_address
 context["host_address"] = host_address

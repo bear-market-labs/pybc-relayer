@@ -52,8 +52,8 @@ sys.path.append(os.path.join(os.path.dirname(__name__), '..', 'scripts'))
 
 from helpers import proto_to_binary, timestamp_string_to_proto, stargate_msg, create_ibc_client, fetch_chain_objects, bech32_to_hexstring, hexstring_to_bytes, bech32_to_b64, b64_to_bytes, fabricate_update_client, fetch_proofs, deploy_local_wasm, init_contract, execute_msg, fetch_channel_proof, fetch_pending_packets, fetch_packet_proof, fetch_ack_proof
 
-#setup lcd clients, rpc urls, wallets
-(terra, wallet, terra_rpc_url, terra_rpc_header) = fetch_chain_objects("pisco-1")
+#setup lcd clients, rpc urls, inj_wallets
+(inj, inj_wallet, inj_rpc_url, inj_rpc_header) = fetch_chain_objects("injective-888")
 (osmo, osmo_wallet, osmo_rpc_url, osmo_rpc_header) = fetch_chain_objects("osmo-test-4")
 
 #load ibc client & connection information from previous notebooks
@@ -65,52 +65,52 @@ with open("context.json", "r") as f:
     
 print(context)
     
-client_id_on_terra = context["client_id_on_terra"]
+client_id_on_inj = context["client_id_on_inj"]
 client_id_on_osmo = context["client_id_on_osmo"]
-connection_id_on_terra = context["connection_id_on_terra"]
+connection_id_on_inj = context["connection_id_on_inj"]
 connection_id_on_osmo = context["connection_id_on_osmo"]
-channel_id_on_terra = context["channel_id_on_terra"]
+channel_id_on_inj = context["channel_id_on_inj"]
 channel_id_on_osmo = context["channel_id_on_osmo"]
-port_id_on_terra = context["port_id_on_terra"]
+port_id_on_inj = context["port_id_on_inj"]
 port_id_on_osmo = context["port_id_on_osmo"]
-last_relayed_height_on_terra = context["last_relayed_height_on_terra"] if "last_relayed_height_on_terra" in context.keys() else terra.tendermint.block_info()["block"]["header"]["height"]
+last_relayed_height_on_inj = context["last_relayed_height_on_inj"] if "last_relayed_height_on_inj" in context.keys() else inj.tendermint.block_info()["block"]["header"]["height"]
 last_relayed_height_on_osmo = context["last_relayed_height_on_osmo"] if "last_relayed_height_on_osmo" in context.keys() else osmo.tendermint.block_info()["block"]["header"]["height"]
-last_ack_height_on_terra = context["last_ack_height_on_terra"] if "last_ack_height_on_terra" in context.keys() else terra.tendermint.block_info()["block"]["header"]["height"]
+last_ack_height_on_inj = context["last_ack_height_on_inj"] if "last_ack_height_on_inj" in context.keys() else inj.tendermint.block_info()["block"]["header"]["height"]
 last_ack_height_on_osmo = context["last_ack_height_on_osmo"] if "last_ack_height_on_osmo" in context.keys() else osmo.tendermint.block_info()["block"]["header"]["height"]
 
 #################################################################################
 # RELAY QUEUED PACKETS FROM BOTH CHAINS
 #################################################################################
 
-#fetch queued packets on TERRA-side
-min_height = last_relayed_height_on_terra
-max_height = terra.tendermint.block_info()["block"]["header"]["height"]
-context["last_relayed_height_on_terra"] = max_height
-pending_packets_df = fetch_pending_packets(min_height, max_height, connection_id_on_terra, connection_id_on_osmo, port_id_on_terra, port_id_on_osmo, channel_id_on_terra, channel_id_on_osmo, terra_rpc_url, terra_rpc_header, osmo_rpc_url, osmo_rpc_header)
+#fetch queued packets on inj-side
+min_height = last_relayed_height_on_inj
+max_height = inj.tendermint.block_info()["block"]["header"]["height"]
+context["last_relayed_height_on_inj"] = max_height
+pending_packets_df = fetch_pending_packets(min_height, max_height, connection_id_on_inj, connection_id_on_osmo, port_id_on_inj, port_id_on_osmo, channel_id_on_inj, channel_id_on_osmo, inj_rpc_url, inj_rpc_header, osmo_rpc_url, osmo_rpc_header)
 
-print("terra-side packets to relay:")
+print("inj-side packets to relay:")
 print(pending_packets_df)
 
 #fetch queued packets on OSMO-side
 min_height = last_relayed_height_on_osmo
 max_height = osmo.tendermint.block_info()["block"]["header"]["height"]
 context["last_relayed_height_on_osmo"] = max_height
-osmo_pending_packets_df = fetch_pending_packets(min_height, max_height, connection_id_on_osmo, connection_id_on_terra, port_id_on_osmo, port_id_on_terra, channel_id_on_osmo, channel_id_on_terra, osmo_rpc_url, osmo_rpc_header, terra_rpc_url, terra_rpc_header)
+osmo_pending_packets_df = fetch_pending_packets(min_height, max_height, connection_id_on_osmo, connection_id_on_inj, port_id_on_osmo, port_id_on_inj, channel_id_on_osmo, channel_id_on_inj, osmo_rpc_url, osmo_rpc_header, inj_rpc_url, inj_rpc_header)
 
 print("\n\nosmo-side packets to relay:")
 print(osmo_pending_packets_df)
 
-#TERRA --> OSMO
+#inj --> OSMO
 #update the client on osmo, fetch packet proofs, and dispatch relay message
 time.sleep(20)
-update_client_msg = fabricate_update_client(terra, terra_rpc_url, terra_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
+update_client_msg = fabricate_update_client(inj, inj_rpc_url, inj_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
 update_client_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, osmo_wallet, osmo)
-terra_client_trusted_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
-terra_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
+inj_client_trusted_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
+inj_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
 
 if pending_packets_df.shape[0] > 0:
     packet_proofs = [
-      (i, fetch_packet_proof(terra_rpc_url, terra_rpc_header, terra_client_trusted_height, terra_client_trusted_revision_number, x, port_id_on_terra, channel_id_on_terra))
+      (i, fetch_packet_proof(inj_rpc_url, inj_rpc_header, inj_client_trusted_height, inj_client_trusted_revision_number, x, port_id_on_inj, channel_id_on_inj))
 
       for (i,x) in pending_packets_df[pending_packets_df["timed_out"]==False].iterrows()
     ]
@@ -133,7 +133,7 @@ if pending_packets_df.shape[0] > 0:
         msg = MsgRecvPacket(
           packet=packet,
           proof_commitment=proof[1].SerializeToString(),
-          proof_height=Height(int(terra_client_trusted_revision_number), int(terra_client_trusted_height)),
+          proof_height=Height(int(inj_client_trusted_revision_number), int(inj_client_trusted_height)),
           signer=osmo_wallet.key.acc_address
         )
 
@@ -141,16 +141,16 @@ if pending_packets_df.shape[0] > 0:
         relay_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_results.append(relay_result_df)
 
-    print("\n\nterra to osmo relayed packets:")
+    print("\n\ninj to osmo relayed packets:")
     print(relay_results)
 
-#OSMO --> TERRA
+#OSMO --> inj
 #update the client on osmo, fetch packet proofs, and dispatch relay message
 time.sleep(10)
-update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, osmo_rpc_header, terra, wallet, client_id_on_terra)
-update_client_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, wallet, terra)
+update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, osmo_rpc_header, inj, inj_wallet, client_id_on_inj)
+update_client_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, inj_wallet, inj)
 osmo_client_trusted_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
-osmo_client_trusted_revision_number = terra.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_terra}")["client_state"]["latest_height"]["revision_number"]
+osmo_client_trusted_revision_number = inj.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_inj}")["client_state"]["latest_height"]["revision_number"]
 
 if osmo_pending_packets_df.shape[0] > 0:
     packet_proofs = [
@@ -181,19 +181,19 @@ if osmo_pending_packets_df.shape[0] > 0:
           signer=wallet.key.acc_address
         )
 
-        relay_result = stargate_msg("/ibc.core.channel.v1.MsgRecvPacket", msg, wallet, terra)
+        relay_result = stargate_msg("/ibc.core.channel.v1.MsgRecvPacket", msg, inj_wallet, inj)
         relay_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_results.append(relay_result_df)
 
-    print("\n\nosmo to terra relayed packets:")
+    print("\n\nosmo to inj relayed packets:")
     print(relay_results)
 
 #################################################################################
 # RELAY QUEUED ACKS FROM BOTH CHAINS
 #################################################################################
 
-#OSMO --> TERRA
-#fetch queued acks on OSMO, and relay back to TERRA
+#OSMO --> inj
+#fetch queued acks on OSMO, and relay back to inj
 time.sleep(10) #wait for rpc indexers to catch up
 
 min_height = last_ack_height_on_osmo
@@ -217,20 +217,20 @@ if len(parsed_acks) > 0:
 
     params = {
       "path": '"/ibc.core.channel.v1.Query/UnreceivedAcks"',
-      "data": "0x" + QueryUnreceivedAcksRequest(port_id_on_terra, channel_id_on_terra, list(acks_df["packet_sequence"].map(lambda x: int(x)).values)).SerializeToString().hex(),
+      "data": "0x" + QueryUnreceivedAcksRequest(port_id_on_inj, channel_id_on_inj, list(acks_df["packet_sequence"].map(lambda x: int(x)).values)).SerializeToString().hex(),
       "prove": "false",
     }
     
-    unreceived_ack_sequence_numbers = QueryUnreceivedAcksResponse.FromString(b64_to_bytes(requests.get(f"{terra_rpc_url}/abci_query", headers=terra_rpc_header, params=params).json()["result"]["response"]["value"])).sequences
+    unreceived_ack_sequence_numbers = QueryUnreceivedAcksResponse.FromString(b64_to_bytes(requests.get(f"{inj_rpc_url}/abci_query", headers=inj_rpc_header, params=params).json()["result"]["response"]["value"])).sequences
     unreceived_acks = acks_df[acks_df["packet_sequence"].isin([str(x) for x in unreceived_ack_sequence_numbers])]
 
     ##update client
-    update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, terra_rpc_header, terra, wallet, client_id_on_terra)
-    update_client_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, wallet, terra)
+    update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, inj_rpc_header, inj, inj_wallet, client_id_on_inj)
+    update_client_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, inj_wallet, inj)
     header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
 
     osmo_client_trusted_height = header_height
-    osmo_client_trusted_revision_number = terra.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_terra}")["client_state"]["latest_height"]["revision_number"]
+    osmo_client_trusted_revision_number = inj.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_inj}")["client_state"]["latest_height"]["revision_number"]
 
 
     ##fetch packetack proofs
@@ -264,25 +264,25 @@ if len(parsed_acks) > 0:
           signer=wallet.key.acc_address,
         )
 
-        relay_ack_result = stargate_msg("/ibc.core.channel.v1.MsgAcknowledgement", msg, wallet, terra)
+        relay_ack_result = stargate_msg("/ibc.core.channel.v1.MsgAcknowledgement", msg, inj_wallet, inj)
         relay_ack_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_ack_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_ack_results.append(relay_ack_result_df)
 
-    print("\n\nosmo to terra relayed acks:")
+    print("\n\nosmo to inj relayed acks:")
     print(relay_ack_results)
 
-#TERRA --> OSMO
-#fetch queued acks on TERRA, and relay back to OSMO
+#inj --> OSMO
+#fetch queued acks on inj, and relay back to OSMO
 time.sleep(10) #wait for rpc indexers to catch up
 
-min_height = last_ack_height_on_terra
-max_height=int(terra.tendermint.block_info()["block"]["header"]["height"])
-context["last_ack_height_on_terra"] = max_height
+min_height = last_ack_height_on_inj
+max_height=int(inj.tendermint.block_info()["block"]["header"]["height"])
+context["last_ack_height_on_inj"] = max_height
 
 params = {
-  "query": "0x" + bytes(f"write_acknowledgement.packet_connection='{connection_id_on_terra}' and tx.height>={min_height} and tx.height<={max_height}", "ascii").hex(),
+  "query": "0x" + bytes(f"write_acknowledgement.packet_connection='{connection_id_on_inj}' and tx.height>={min_height} and tx.height<={max_height}", "ascii").hex(),
 }
-tx_results = requests.get(f"{terra_rpc_url}/tx_search", headers=terra_rpc_header, params=params).json()
+tx_results = requests.get(f"{inj_rpc_url}/tx_search", headers=inj_rpc_header, params=params).json()
 parsed_acks = [ (i, b64_to_bytes(z["key"]).decode("utf-8"), b64_to_bytes(z["value"]).decode("utf-8"))
   for (i, y) in enumerate(tx_results["result"]["txs"])
   for x in y["tx_result"]["events"] if x["type"]=="write_acknowledgement"
@@ -304,17 +304,17 @@ if len(parsed_acks) > 0:
 
 
     ##update client
-    update_client_msg = fabricate_update_client(terra, terra_rpc_url, osmo_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
+    update_client_msg = fabricate_update_client(inj, inj_rpc_url, osmo_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
     update_client_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, osmo_wallet, osmo)
     header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
 
-    terra_client_trusted_height = header_height
-    terra_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
+    inj_client_trusted_height = header_height
+    inj_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
 
 
     ##fetch packet ack proofs 
     ack_proofs = [
-        fetch_ack_proof(terra_rpc_url, terra_rpc_header, x, terra_client_trusted_height, terra_client_trusted_revision_number)
+        fetch_ack_proof(inj_rpc_url, inj_rpc_header, x, inj_client_trusted_height, inj_client_trusted_revision_number)
 
         for (i,x) in acks_df.iterrows()
     ]
@@ -347,26 +347,26 @@ if len(parsed_acks) > 0:
         relay_ack_result_df = pd.DataFrame([y for x in [x["attributes"] for x in relay_ack_result["tx_response"]["logs"][0]["events"]] for y in x])
         relay_ack_results.append(relay_ack_result_df)
 
-    print("\n\nterra to osmo relayed acks:")
+    print("\n\ninj to osmo relayed acks:")
     print(relay_ack_results)
 
 #################################################################################
 # HANDLE TIMED-OUT PACKETS FROM BOTH CHAINS
 #################################################################################
 
-#cleanup TERRA-side timed-out packets
+#cleanup inj-side timed-out packets
 timed_out_packets_df = pd.DataFrame() if pending_packets_df.shape[0] <= 0 else pending_packets_df[pending_packets_df["timed_out"]].reset_index()
 
 if timed_out_packets_df.shape[0] > 0:
 
     #timeout packets
     time.sleep(10)
-    update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, osmo_rpc_header, terra, wallet, client_id_on_terra)
-    update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, wallet, terra)
+    update_client_msg = fabricate_update_client(osmo, osmo_rpc_url, osmo_rpc_header, inj, inj_wallet, client_id_on_inj)
+    update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, inj_wallet, inj)
     header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
 
     osmo_client_trusted_height = header_height
-    osmo_client_trusted_revision_number = terra.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_terra}")["client_state"]["latest_height"]["revision_number"]
+    osmo_client_trusted_revision_number = inj.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_inj}")["client_state"]["latest_height"]["revision_number"]
 
     #query for the next sequence number
     params = {
@@ -414,11 +414,11 @@ if timed_out_packets_df.shape[0] > 0:
           signer=wallet.key.acc_address,
         )
 
-        timeout_result = stargate_msg("/ibc.core.channel.v1.MsgTimeout", msg, wallet, terra)
+        timeout_result = stargate_msg("/ibc.core.channel.v1.MsgTimeout", msg, inj_wallet, inj)
         timeout_result_df = pd.DataFrame([y for x in [x["attributes"] for x in timeout_result["tx_response"]["logs"][0]["events"]] for y in x])
         time_out_results.append(timeout_result_df)
 
-    print("\n\nterra-side timed-out packets:")
+    print("\n\ninj-side timed-out packets:")
     print(time_out_results)
 
 #cleanup OSMO-side timed-out packets
@@ -428,20 +428,20 @@ if timed_out_packets_df.shape[0] > 0:
 
     #timeout packets
     time.sleep(10)
-    update_client_msg = fabricate_update_client(terra, terra_rpc_url, terra_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
+    update_client_msg = fabricate_update_client(inj, inj_rpc_url, inj_rpc_header, osmo, osmo_wallet, client_id_on_osmo)
     update_client_before_channel_try_result = stargate_msg("/ibc.core.client.v1.MsgUpdateClient", update_client_msg, osmo_wallet, osmo)
     header_height = Header.FromString(update_client_msg.header.value).signed_header.header.height
 
-    terra_client_trusted_height = header_height
-    terra_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
+    inj_client_trusted_height = header_height
+    inj_client_trusted_revision_number = osmo.broadcaster.query(f"/ibc/core/client/v1/client_states/{client_id_on_osmo}")["client_state"]["latest_height"]["revision_number"]
 
     #query for the next sequence number
     params = {
       "path": '"/ibc.core.channel.v1.Query/NextSequenceReceive"',
-      "data": "0x" + QueryNextSequenceReceiveRequest(port_id_on_terra, channel_id_on_terra).SerializeToString().hex(),
+      "data": "0x" + QueryNextSequenceReceiveRequest(port_id_on_inj, channel_id_on_inj).SerializeToString().hex(),
       "prove": "false",
     }
-    next_sequence_number = QueryNextSequenceReceiveResponse.FromString(b64_to_bytes(requests.get(f"{terra_rpc_url}/abci_query", headers=terra_rpc_header, params=params).json()["result"]["response"]["value"])).next_sequence_receive
+    next_sequence_number = QueryNextSequenceReceiveResponse.FromString(b64_to_bytes(requests.get(f"{inj_rpc_url}/abci_query", headers=inj_rpc_header, params=params).json()["result"]["response"]["value"])).next_sequence_receive
 
 
     #for each timed-out packet, fetch nonexistence proof (ie, the timed-out packet never executed on osmo), and dispatch timeout msg
@@ -464,16 +464,16 @@ if timed_out_packets_df.shape[0] > 0:
           "path": '"/store/ibc/key"',
           "data": "0x" + bytes(f"receipts/ports/{packet.destination_port}/channels/{packet.destination_channel}/sequences/{packet.sequence}", "ascii").hex(),
           "prove": "true",
-          "height": int(terra_client_trusted_height) - 1,
+          "height": int(inj_client_trusted_height) - 1,
         }
-        resp = requests.get(f"{terra_rpc_url }/abci_query", headers=terra_rpc_header, params=params).json()
+        resp = requests.get(f"{inj_rpc_url }/abci_query", headers=inj_rpc_header, params=params).json()
         proofs = [CommitmentProof.FromString(b64_to_bytes(x["data"])) for x in resp["result"]["response"]["proofOps"]["ops"]]
         receipt_proof = MerkleProof(proofs=proofs)
 
         msg = MsgTimeout(
           packet=packet,
           proof_unreceived=receipt_proof.SerializeToString(),
-          proof_height=Height(int(terra_client_trusted_revision_number), int(terra_client_trusted_revision_number)),
+          proof_height=Height(int(inj_client_trusted_revision_number), int(inj_client_trusted_revision_number)),
           next_sequence_recv=next_sequence_number,
           signer=osmo_wallet.key.acc_address,
         )
