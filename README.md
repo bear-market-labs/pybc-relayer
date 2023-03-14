@@ -8,7 +8,6 @@ We heavily utilize/reference several projects:
 
 - confio's ts-relayer and simple-ica repos (https://github.com/confio/ts-relayer and https://github.com/confio/cw-ibc-demo)
 - terra's python and proto repos (https://github.com/terra-money/terra.py and https://github.com/terra-money/terra.proto)
-- setten for terra rpcs (https://setten.io/)
 
 ## Docker
 
@@ -16,7 +15,7 @@ After installing Docker, run build.sh and run.sh to get the pybc-relayer jupyter
 
 ## Notebooks
 
-The notebooks are named in the recommended order of execution. Currently, they walkthru setting up an IBC connection between terra and osmosis testnets, and deploying confio's simple-ica contracts.
+The notebooks are named in the recommended order of execution. Currently, they walkthru setting up an IBC connection between injective and osmosis testnets, and deploying confio's simple-ica contracts.
 
 The "business-as-usual" relaying is still a WIP, but confio's ts-relayer and hermes are perfectly fine/production-level relayers.
 

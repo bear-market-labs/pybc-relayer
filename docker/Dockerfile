@@ -30,4 +30,4 @@ run pip install -r /opt/requirements.txt
 # command
 #############################################
 
-entrypoint ["jupyter", "lab", "--port=6994", "--allow-root", "--NotebookApp.token=''", "--notebook-dir=/repos", "--NotebookApp.allow_origin='*'", "--no-browser", "--ip='*'"]
+entrypoint ["jupyter", "lab", "--port=6994", "--allow-root", "--notebook-dir=/repos", "--NotebookApp.allow_origin='*'", "--no-browser", "--ip='*'"]

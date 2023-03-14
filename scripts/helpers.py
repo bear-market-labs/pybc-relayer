@@ -51,19 +51,34 @@ from google.protobuf.timestamp_pb2 import Timestamp as googTimestamp
 # wasm tx helpers
 ###############################################
 
+
 def deploy_local_wasm(file_path, wallet, terra):
 
   print(f"file_path: {file_path}\nwallet: {wallet.key.acc_address}")
 
-  fee = Fee(10000000, "2000000uosmo")
+  fee = Fee(6000000, "4000000000000000inj")
   if ("terra" in terra.chain_id) or ("pisco" in terra.chain_id):
     fee = Fee(6900000, "2000000uluna")
+  elif ("cube" in terra.chain_id):
+    fee = Fee(6000000,"5100000000000000000axpla")
+  elif ("osmo" in terra.chain_id):
+    fee = Fee(10000000, "2000000uosmo")
 
   with open(file_path, "rb") as fp:
     file_bytes = base64.b64encode(fp.read()).decode()
     store_code_msg = MsgStoreCode(wallet.key.acc_address, file_bytes, instantiate_permission=AccessConfig(AccessType.ACCESS_TYPE_EVERYBODY, ""))
-    store_code_tx = wallet.create_and_sign_tx(CreateTxOptions(msgs=[store_code_msg], fee=fee))
+
+    opts = CreateTxOptions(msgs=[store_code_msg], fee=fee)
+
+    if ("888" in terra.chain_id) or ("cube" in terra.chain_id):
+      account_data = terra.broadcaster.query(f"/cosmos/auth/v1beta1/accounts/{wallet.key.acc_address}")
+      opts.account_number = int(account_data["account"]["base_account"]["account_number"])
+      opts.sequence = int(account_data["account"]["base_account"]["sequence"])
+
+    store_code_tx = wallet.create_and_sign_tx(opts)
     store_code_result = terra.tx.broadcast(store_code_tx)
+
+  print(store_code_result)
 
   #persist code_id
   deployed_code_id = store_code_result.logs[0].events_by_type["store_code"]["code_id"][0]
@@ -72,9 +87,13 @@ def deploy_local_wasm(file_path, wallet, terra):
 
 def init_contract(code_id, init_msg, wallet, terra, name):
 
-  fee = Fee(690000, "500000uosmo")
+  fee = Fee(3000000, "1500000000000000inj")
   if ("terra" in terra.chain_id) or ("pisco" in terra.chain_id):
     fee = Fee(690000, "500000uluna")
+  elif ("cube" in terra.chain_id):
+    fee = Fee(3000000,"2550000000000000000axpla")
+  elif ("osmo" in terra.chain_id):
+    fee = Fee(10000000, "2000000uosmo")
 
   #invoke contract instantiate
   instantiate_msg = MsgInstantiateContract(
@@ -85,16 +104,27 @@ def init_contract(code_id, init_msg, wallet, terra, name):
     init_msg,
   )
 
-  instantiate_tx = wallet.create_and_sign_tx(CreateTxOptions(msgs=[instantiate_msg], fee=fee))
+  opts = CreateTxOptions(msgs=[instantiate_msg], fee=fee)
+
+  if ("888" in terra.chain_id) or ("cube" in terra.chain_id):
+    account_data = terra.broadcaster.query(f"/cosmos/auth/v1beta1/accounts/{wallet.key.acc_address}")
+    opts.account_number = int(account_data["account"]["base_account"]["account_number"])
+    opts.sequence = int(account_data["account"]["base_account"]["sequence"])
+
+  instantiate_tx = wallet.create_and_sign_tx(opts)
   instantiate_tx_result = terra.tx.broadcast(instantiate_tx)
 
   return instantiate_tx_result
 
 def execute_msg(address, msg, wallet, terra, coins=None):
 
-  fee = Fee(4000000, "1000000uosmo")
+  fee = Fee(3000000, "1500000000000000inj")
   if ("terra" in terra.chain_id) or ("pisco" in terra.chain_id):
     fee = Fee(6900000, "1500000uluna")
+  elif ("cube" in terra.chain_id):
+    fee = Fee(3000000,"2550000000000000000axpla")
+  elif ("osmo" in terra.chain_id):
+    fee = Fee(10000000, "2000000uosmo")
 
   execute_msg = MsgExecuteContract(
     sender=wallet.key.acc_address,
@@ -103,17 +133,28 @@ def execute_msg(address, msg, wallet, terra, coins=None):
     coins=coins 
   )
 
+  opts = CreateTxOptions(msgs=[execute_msg], fee=fee)
+
+  if ("888" in terra.chain_id) or ("cube" in terra.chain_id):
+    account_data = terra.broadcaster.query(f"/cosmos/auth/v1beta1/accounts/{wallet.key.acc_address}")
+    opts.account_number = int(account_data["account"]["base_account"]["account_number"])
+    opts.sequence = int(account_data["account"]["base_account"]["sequence"])
+
   #there is a fixed UST fee component now, so it's easier to pay fee in UST
-  tx = wallet.create_and_sign_tx(CreateTxOptions(msgs=[execute_msg], fee=fee))
+  tx = wallet.create_and_sign_tx(opts)
   tx_result = terra.tx.broadcast(tx)
 
   return tx_result
 
 def bank_msg_send(recipient, amount, wallet, terra):
 
-  fee = Fee(2000000, "500000uosmo")
+  fee = Fee(3000000, "1500000000000000inj")
   if ("terra" in terra.chain_id) or ("pisco" in terra.chain_id):
     fee = Fee(6900000, "150000uluna")
+  elif ("cube" in terra.chain_id):
+    fee = Fee(3000000,"2550000000000000000axpla")
+  elif ("osmo" in terra.chain_id):
+    fee = Fee(10000000, "2000000uosmo")
 
   bank_msg = MsgSend(
     from_address=wallet.key.acc_address,
@@ -121,15 +162,50 @@ def bank_msg_send(recipient, amount, wallet, terra):
     amount=amount,
   )
 
-  #there is a fixed UST fee component now, so it's easier to pay fee in UST
-  tx = wallet.create_and_sign_tx(CreateTxOptions(msgs=[bank_msg], fee=fee))
+  opts = CreateTxOptions(msgs=[bank_msg], fee=fee)
+
+  if ("888" in terra.chain_id) or ("cube" in terra.chain_id):
+    account_data = terra.broadcaster.query(f"/cosmos/auth/v1beta1/accounts/{wallet.key.acc_address}")
+    opts.account_number = int(account_data["account"]["base_account"]["account_number"])
+    opts.sequence = int(account_data["account"]["base_account"]["sequence"])
+
+  tx = wallet.create_and_sign_tx(opts)
+  tx_result = terra.tx.broadcast(tx)
+
+  return tx_result
+
+def migrate_msg(contract_address, new_code_id, msg, wallet, terra):
+
+  fee = Fee(3000000, "1500000000000000inj")
+  if ("terra" in terra.chain_id) or ("pisco" in terra.chain_id):
+    fee = Fee(6900000, "150000uluna")
+  elif ("cube" in terra.chain_id):
+    fee = Fee(3000000,"2550000000000000000axpla")
+  elif ("osmo" in terra.chain_id):
+    fee = Fee(10000000, "2000000uosmo")
+
+  migrate_msg = MsgMigrateContract(
+    sender=wallet.key.acc_address,
+    contract=contract_address,
+    code_id=new_code_id,
+    msg=msg,
+  )
+
+  opts = CreateTxOptions(msgs=[migrate_msg], fee=fee)
+
+  if ("888" in terra.chain_id) or ("cube" in terra.chain_id):
+    account_data = terra.broadcaster.query(f"/cosmos/auth/v1beta1/accounts/{wallet.key.acc_address}")
+    opts.account_number = int(account_data["account"]["base_account"]["account_number"])
+    opts.sequence = int(account_data["account"]["base_account"]["sequence"])
+
+  tx = wallet.create_and_sign_tx(opts)
   tx_result = terra.tx.broadcast(tx)
 
   return tx_result
 
 def stargate_msg(type_url, msg, wallet, terra):
 
-  if "888" in terra.chain_id:
+  if ("888" in terra.chain_id) or ("cube" in terra.chain_id):
     account_data = terra.broadcaster.query(f"/cosmos/auth/v1beta1/accounts/{wallet.key.acc_address}")
     account_number = int(account_data["account"]["base_account"]["account_number"])
     sequence = int(account_data["account"]["base_account"]["sequence"])
@@ -143,9 +219,12 @@ def stargate_msg(type_url, msg, wallet, terra):
   if "888" in terra.chain_id:
     broadcaster = terra.broadcaster
     fee = Fee(3000000, "1500000000000000inj")
-  elif not(("terra" in terra.chain_id) or ("pisco" in terra.chain_id)):
+  elif ("cube" in terra.chain_id):
     broadcaster = terra.broadcaster
-    fee = Fee(2000000, "500000uosmo")
+    fee = Fee(3000000,"2550000000000000000axpla")
+  elif ("osmo" in terra.chain_id):
+    broadcaster = terra.broadcaster
+    fee = Fee(10000000, "2000000uosmo")
   else:
     broadcaster = terra.broadcaster
     fee = Fee(690000, "15000uluna")
@@ -200,6 +279,7 @@ def stargate_msg(type_url, msg, wallet, terra):
   tx_result = broadcaster.broadcast(tx)
 
   return tx_result
+
 
 ###############################################
 # data formatting helpers
@@ -301,8 +381,10 @@ def fetch_chain_objects(chain_id):
     terra = LCDClient(url="https://pisco-lcd.terra.dev/", chain_id="pisco-1")
     terra.broadcaster = BaseAPI2(terra)
 
-    terra_rpc_url = f"https://rpc.pisco.terra.setten.io/{creds['setten_project_id']}"
-    terra_rpc_header = {"Authorization": f"Bearer {creds['setten_key']}"}
+    #terra_rpc_url = f"https://rpc.pisco.terra.setten.io/{creds['setten_project_id']}"
+    #terra_rpc_header = {"Authorization": f"Bearer {creds['setten_key']}"}
+    terra_rpc_url = "https://terra-rpc.polkachu.com/"
+    terra_rpc_header = {}
     
     wallet = terra.wallet(MnemonicKey(mnemonic=seed_phrase))
 
@@ -327,6 +409,18 @@ def fetch_chain_objects(chain_id):
 
     wallet = inj.wallet(InjKey(mnemonic=seed_phrase, coin_type=60))
     return (inj, wallet, inj_rpc_url, inj_rpc_header)
+  elif chain_id == "localterra":
+    terra = LCDClient(url="xxx", chain_id="localterra")
+    terra.broadcaster = BaseAPI2(terra)
+
+    #terra_rpc_url = f"https://rpc.pisco.terra.setten.io/{creds['setten_project_id']}"
+    #terra_rpc_header = {"Authorization": f"Bearer {creds['setten_key']}"}
+    terra_rpc_url = "xxx"
+    terra_rpc_header = {}
+    
+    wallet = terra.wallet(MnemonicKey(mnemonic=seed_phrase))
+
+    return (terra, wallet, terra_rpc_url, terra_rpc_header)
   
   return (None, None, None, None)
     
